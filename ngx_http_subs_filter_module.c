@@ -5,6 +5,10 @@
  * same terms as Nginx itself.
  */
 
+/*
+* hide block usage
+* subs_filter source_str destination_str d
+*/
 
 #include <ngx_config.h>
 #include <ngx_core.h>
@@ -31,6 +35,7 @@ typedef struct {
     ngx_flag_t     once;
     ngx_flag_t     regex;
     ngx_flag_t     insensitive;
+	ngx_flag_t     hidden_matched;
 
     /* If it has captured variables? */
     ngx_flag_t     has_captured;
@@ -60,6 +65,7 @@ typedef struct {
 
 
 typedef struct {
+
     ngx_array_t   *sub_pairs;  /* array of sub_pair_t */
 
     ngx_chain_t   *in;
@@ -86,7 +92,7 @@ typedef struct {
 
 } ngx_http_subs_ctx_t;
 
-
+static ngx_str_t null = ngx_string("");
 static ngx_int_t ngx_http_subs_header_filter(ngx_http_request_t *r);
 static ngx_int_t ngx_http_subs_init_context(ngx_http_request_t *r);
 
@@ -129,6 +135,8 @@ static ngx_int_t ngx_http_subs_filter_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_subs_regex_capture_count(ngx_regex_t *re);
 #endif
 
+static ngx_str_t hidden_match = ngx_string(">");
+static ngx_str_t hidden_sub = ngx_string(" style=\"display:none\">");
 
 static ngx_command_t  ngx_http_subs_filter_commands[] = {
 
@@ -210,24 +218,12 @@ ngx_http_subs_header_filter(ngx_http_request_t *r)
 
     if (slcf->sub_pairs->nelts == 0
         || r->header_only
-        || r->headers_out.content_type.len == 0
-        || r->headers_out.content_length_n == 0)
+        || r->headers_out.content_type.len == 0)
     {
         return ngx_http_next_header_filter(r);
     }
 
     if (ngx_http_test_content_type(r, &slcf->types) == NULL) {
-        return ngx_http_next_header_filter(r);
-    }
-
-    /* Don't do substitution with the compressed content */
-    if (r->headers_out.content_encoding
-        && r->headers_out.content_encoding->value.len) {
-
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                      "http subs filter header ignored, this may be a "
-                      "compressed response.");
-
         return ngx_http_next_header_filter(r);
     }
 
@@ -245,6 +241,7 @@ ngx_http_subs_header_filter(ngx_http_request_t *r)
         ngx_http_clear_last_modified(r);
     }
 
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "http subs filter header done");
     return ngx_http_next_header_filter(r);
 }
 
@@ -338,6 +335,7 @@ ngx_http_subs_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         goto failed;
     }
 
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "http subs filter body start");
     for (cl = ctx->in; cl; cl = cl->next) {
 
         if (cl->buf->last_buf || cl->buf->last_in_chain){
@@ -820,6 +818,22 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
         if (sub_start == NULL) {
             break;
         }
+		/*
+		*	author @billowkiller
+		*	2013/12/12
+		*/
+		if(pair->hidden_matched == 1)
+		{
+			sub_start = subs_memmem(sub_start, b->last - sub_start,
+                                hidden_match.data, hidden_match.len);
+			
+			if (sub_start == NULL) 
+				break;
+			
+			pair->sub = hidden_sub;
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+						   "pair->sub: %V", &pair->sub);
+		}
 
         pair->matched++;
         count++;
@@ -836,11 +850,23 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "fixed string match: %p", sub_start);
-
-        b->pos = sub_start + pair->match.len;
-
-        if ((ngx_uint_t)(b->last - b->pos) < pair->match.len)
-            break;
+		
+		/*
+		*	author @billowkiller
+		*	2013/12/12
+		*/
+		if(pair->hidden_matched == 1)
+		{
+			b->pos = sub_start + hidden_match.len;
+			if ((ngx_uint_t)(b->last - b->pos) < hidden_match.len)
+				break;
+		}
+		else
+		{
+			b->pos = sub_start + pair->match.len;
+			if ((ngx_uint_t)(b->last - b->pos) < pair->match.len)
+				break;
+		}
     }
 
     return count;
@@ -1068,7 +1094,12 @@ ngx_http_subs_filter( ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         }
 
     } else {
-        pair->sub = value[2];
+		if(!ngx_strncmp(value[2].data, "null", 4))
+			pair->sub = null;
+		else
+		{
+			pair->sub = value[2];
+		}
     }
 
     if (cf->args->nelts > 3) {
@@ -1086,6 +1117,11 @@ ngx_http_subs_filter( ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
             case 'r':
                 pair->regex = 1;
+                break;
+
+			case 'd':
+				pair->once = 1;
+                pair->hidden_matched = 1;
                 break;
 
             case 'g':
