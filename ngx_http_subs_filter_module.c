@@ -89,7 +89,13 @@ typedef struct {
     ngx_int_t      bufs;
 
     unsigned       last;
-    ngx_flag_t     block;
+
+	/*  
+	 *  Author @billowkiller
+	 *  2012/12/12
+	 */
+    ngx_int_t     block;
+	ngx_str_t     tag;
 
 } ngx_http_subs_ctx_t;
 
@@ -136,7 +142,7 @@ static ngx_int_t ngx_http_subs_filter_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_subs_regex_capture_count(ngx_regex_t *re);
 #endif
 
-static ngx_str_t hidden_match = ngx_string(">");
+//static ngx_str_t hidden_match = ngx_string(">");
 //static ngx_str_t hidden_sub = ngx_string(" style=\"display:none\">");
 
 static ngx_command_t  ngx_http_subs_filter_commands[] = {
@@ -605,7 +611,7 @@ ngx_http_subs_match(ngx_http_request_t *r, ngx_http_subs_ctx_t *ctx)
         }
 
         if ((!pair->regex)
-             && ((ngx_uint_t)(src->last - src->pos) < pair->match.len)) {
+             && ((ngx_uint_t)(src->last - src->pos) < pair->match.len && ctx->block == 0)) {
             continue;
         }
 
@@ -640,7 +646,6 @@ ngx_http_subs_match(ngx_http_request_t *r, ngx_http_subs_ctx_t *ctx)
 
         /* no match. */
         if (count == 0){
-			/* clear line */
 			if(ctx->block)
 			{
 				ngx_buffer_init(ctx->line_in);
@@ -845,12 +850,29 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 	*/
 	if(ctx->block)
 	{
-        sub_start = subs_memmem(b->pos, b->last - b->pos, hidden_match.data, hidden_match.len);
-		if(sub_start == NULL)
-			return 0;
+	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "b : %*s", b->last-b->pos, b->pos); 
+        sub_start = subs_memmem(b->pos, b->last - b->pos, ctx->tag.data, ctx->tag.len);
+		if(sub_start) {
+			do
+			{
+				if((*(sub_start + ctx->tag.len)=='<' ) || *(sub_start + ctx->tag.len)=='>' )
+					*(sub_start-1)=='/' ? ctx->block-- : ctx->block++;
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "ctx->block: %i", ctx->block); 
+				b->pos = sub_start + ctx->tag.len + 1; // $tag>
+				if(ctx->block)
+					sub_start = subs_memmem(b->pos, b->last-b->pos, ctx->tag.data, ctx->tag.len);
+			}while(ctx->block && sub_start);
+		}
 
-		ctx->block = 0;
-		b->pos = sub_start+1;
+		if(ctx->block)
+		{
+			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "abandon directly"); 
+
+			b->pos = b->last;
+			return 0;
+		}
+		/* meet the close tag */
+		pair->matched++;
 	}
 	/* end */
     while(b->pos < b->last) {
@@ -866,6 +888,7 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 		/*
 		*	author @billowkiller
 		*	2013/12/12
+		*	TODO: remember html tag
 		*/
 		if(pair->hidden_matched == 1)
 		{
@@ -874,29 +897,54 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 			/* need debug */
 			if (sub_start == NULL) 
 				break;
-			
+
 			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,  "find <");
-			pair->matched++;
 			count++;
 			
 			if (buffer_append_string(dst, b->pos, sub_start - b->pos, r->pool) == NULL)
 				return NGX_ERROR;
 
 			b->pos = sub_start;
-			sub_start = subs_memmem(sub_start, b->last-sub_start, hidden_match.data, hidden_match.len);
-			if(sub_start == NULL)
+
+			/* fetch html tag 
+			 * debug if tag == NULL
+			 */
+			ctx->tag.data = ++sub_start;
+			ctx->tag.len = 0;
+			while(*(sub_start) != ' ' && *(sub_start) != '/')
 			{
-				ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,  "not find >");
-				ctx->block = 1;
-				b->last = b->pos;
+				sub_start++;
+				ctx->tag.len++;
+			}
+			ctx->tag.data = ngx_palloc(r->pool, ctx->tag.len);
+			ngx_memcpy(ctx->tag.data, sub_start-ctx->tag.len, ctx->tag.len);
+
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "tag: %V", &ctx->tag); 
+			/* end */
+			ctx->block = 1;
+
+			sub_start = subs_memmem(sub_start, b->last-sub_start, ctx->tag.data, ctx->tag.len);
+			if(sub_start) {
+				do
+				{
+					if((*(sub_start + ctx->tag.len)=='<' ) || *(sub_start + ctx->tag.len)=='>' )
+						(*(sub_start-1))=='/' ? ctx->block-- : ctx->block++;
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "ctx->block: %i", ctx->block); 
+					b->pos = sub_start + ctx->tag.len + 1; // $tag>
+					if(ctx->block)
+						sub_start = subs_memmem(b->pos, b->last-b->pos, ctx->tag.data, ctx->tag.len);
+				}while(ctx->block && sub_start);
+			}
+
+			if(ctx->block)
+			{
+				b->pos = b->last;
 				break;
 			}
-			else
-			{
-				ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,  "find >, distance: %i", sub_start - b->pos);
-				b->pos = sub_start + hidden_match.len;
-				break;
-			}
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "first meet block: %i", ctx->block); 
+
+			/* meet the close tag */
+			pair->matched++;
 
 //			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
 //						   "pair->sub: %V", &pair->sub);
