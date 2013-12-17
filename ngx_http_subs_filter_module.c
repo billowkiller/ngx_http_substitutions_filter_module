@@ -843,6 +843,7 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 {
     u_char      *sub_start;
     ngx_int_t    count = 0;
+	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "b : %*s", b->last-b->pos, b->pos); 
 
 	/*
 	*	author @billowkiller
@@ -850,14 +851,12 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 	*/
 	if(ctx->block)
 	{
-	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "b : %*s", b->last-b->pos, b->pos); 
         sub_start = subs_memmem(b->pos, b->last - b->pos, ctx->tag.data, ctx->tag.len);
 		if(sub_start) {
 			do
 			{
 				if((*(sub_start + ctx->tag.len)=='<' ) || *(sub_start + ctx->tag.len)=='>' )
 					*(sub_start-1)=='/' ? ctx->block-- : ctx->block++;
-	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "ctx->block: %i", ctx->block); 
 				b->pos = sub_start + ctx->tag.len + 1; // $tag>
 				if(ctx->block)
 					sub_start = subs_memmem(b->pos, b->last-b->pos, ctx->tag.data, ctx->tag.len);
@@ -866,8 +865,6 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 
 		if(ctx->block)
 		{
-			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "abandon directly"); 
-
 			b->pos = b->last;
 			return 0;
 		}
@@ -892,6 +889,7 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 		*/
 		if(pair->hidden_matched == 1)
 		{
+			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,  "find keyword");
 			sub_start = subs_bmemmem(sub_start, sub_start-b->pos, '<');
 			
 			/* need debug */
@@ -927,7 +925,7 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 			if(sub_start) {
 				do
 				{
-					if((*(sub_start + ctx->tag.len)=='<' ) || *(sub_start + ctx->tag.len)=='>' )
+					if((*(sub_start-1)=='<' ) || *(sub_start + ctx->tag.len)=='>' )
 						(*(sub_start-1))=='/' ? ctx->block-- : ctx->block++;
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "ctx->block: %i", ctx->block); 
 					b->pos = sub_start + ctx->tag.len + 1; // $tag>
@@ -941,7 +939,6 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 				b->pos = b->last;
 				break;
 			}
-			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "first meet block: %i", ctx->block); 
 
 			/* meet the close tag */
 			pair->matched++;
