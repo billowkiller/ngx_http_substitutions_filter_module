@@ -855,7 +855,7 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 		if(sub_start) {
 			do
 			{
-				if((*(sub_start + ctx->tag.len)=='<' ) || *(sub_start + ctx->tag.len)=='>' )
+				if((*(sub_start - 1)=='<' ) || *(sub_start + ctx->tag.len)=='>' )
 					*(sub_start-1)=='/' ? ctx->block-- : ctx->block++;
 				b->pos = sub_start + ctx->tag.len + 1; // $tag>
 				if(ctx->block)
