@@ -890,34 +890,38 @@ ngx_http_subs_match_fix_substituion(ngx_http_request_t *r,
 		if(pair->hidden_matched == 1)
 		{
 			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,  "find keyword");
-			sub_start = subs_bmemmem(sub_start, sub_start-b->pos, '<');
-			
-			/* need debug */
-			if (sub_start == NULL) 
-				break;
-
-			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,  "find <");
-			count++;
-			
-			if (buffer_append_string(dst, b->pos, sub_start - b->pos, r->pool) == NULL)
-				return NGX_ERROR;
-
-			b->pos = sub_start;
-
-			/* fetch html tag 
-			 * debug if tag == NULL
-			 */
-			ctx->tag.data = ++sub_start;
-			ctx->tag.len = 0;
-			while(*(sub_start) != ' ' && *(sub_start) != '/')
+			while(NULL != (sub_start = subs_bmemmem(sub_start, sub_start-b->pos, '<')))
 			{
-				sub_start++;
-				ctx->tag.len++;
-			}
-			ctx->tag.data = ngx_palloc(r->pool, ctx->tag.len);
-			ngx_memcpy(ctx->tag.data, sub_start-ctx->tag.len, ctx->tag.len);
+				ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,  "find <");
 
-			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "tag: %V", &ctx->tag); 
+				b->pos = sub_start;
+
+				/* fetch html tag 
+				 * debug if tag == NULL
+				 */
+				ctx->tag.data = ++sub_start;
+				ctx->tag.len = 0;
+				while(*(sub_start) != ' ' && *(sub_start) != '/')
+				{
+					sub_start++;
+					ctx->tag.len++;
+				}
+				//check whether li div
+				if(ngx_strncmp(ctx->tag.data, "div", ctx->tag.len) && ngx_strncmp(ctx->tag.data, "li", ctx->tag.len))
+				{
+					sub_start -= ctx->tag.len+2;
+					continue;
+				}
+
+				count++;
+				//append front half
+				if (buffer_append_string(dst, b->pos, sub_start-ctx->tag.len-1-b->pos, r->pool) == NULL)
+					return NGX_ERROR;
+				ctx->tag.data = ngx_palloc(r->pool, ctx->tag.len);
+				ngx_memcpy(ctx->tag.data, sub_start-ctx->tag.len, ctx->tag.len);
+
+				ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "tag: %V", &ctx->tag); 
+			}
 			/* end */
 			ctx->block = 1;
 
